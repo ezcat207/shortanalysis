@@ -31,11 +31,7 @@ wheels/
 ._*
 
 # Video downloads
-video_downloads/*.mp4
-video_downloads/*.webm
-video_downloads/*.mkv
-!video_downloads/*.json
-!video_downloads/*.srt
+video_downloads/
 
 # Analysis results
 analysis_results/*.json
@@ -58,3 +54,4 @@ notebooklm_sources/
 # Environment
 .env
 .env.local
+.vercel
