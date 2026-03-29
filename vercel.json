@@ -1,5 +1,9 @@
 {
   "version": 2,
   "cleanUrls": true,
-  "trailingSlash": false
+  "trailingSlash": false,
+  "routes": [
+    { "src": "/$", "dest": "/visualization/index.html" },
+    { "src": "/visualization$", "dest": "/visualization/index.html" }
+  ]
 }

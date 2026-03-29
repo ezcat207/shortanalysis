@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>短剧情绪分析 · Drama Emotion Analytics</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     :root {
       --bg: #0f0f13;
@@ -271,6 +272,7 @@
   <div class="tab active" data-tab="video1">深情誘引</div>
   <div class="tab" data-tab="video2">冒姓琅琊</div>
   <div class="tab" data-tab="compare">对比分析</div>
+  <div class="tab" data-tab="source">来源对比</div>
   <div class="tab" data-tab="notebooklm">NotebookLM 分析</div>
 </div>
 
@@ -327,6 +329,36 @@
     </div>
   </div>
 
+  <!-- Source Compare Tab -->
+  <div id="tab-source" class="tab-panel">
+    <div class="section-title">来源对比 · Ollama vs NotebookLM</div>
+    <div class="chart-card" style="margin-bottom:16px">
+      <div class="timeline-title">深情誘引 · 雷达叠加</div>
+      <canvas id="src-v1-radar" height="100"></canvas>
+    </div>
+    <div class="chart-card" style="margin-bottom:16px">
+      <div class="timeline-title">深情誘引 · 各情绪均值对比</div>
+      <canvas id="src-v1-bars" height="100"></canvas>
+    </div>
+    <div class="chart-card" style="margin-bottom:24px">
+      <div class="timeline-title">深情誘引 · 逐集差异（NotebookLM - Ollama）</div>
+      <canvas id="src-v1-diff" height="110"></canvas>
+    </div>
+
+    <div class="chart-card" style="margin-bottom:16px">
+      <div class="timeline-title">冒姓琅琊 · 雷达叠加</div>
+      <canvas id="src-v2-radar" height="100"></canvas>
+    </div>
+    <div class="chart-card" style="margin-bottom:16px">
+      <div class="timeline-title">冒姓琅琊 · 各情绪均值对比</div>
+      <canvas id="src-v2-bars" height="100"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="timeline-title">冒姓琅琊 · 逐集差异（NotebookLM - Ollama）</div>
+      <canvas id="src-v2-diff" height="110"></canvas>
+    </div>
+  </div>
+
   <!-- NotebookLM Tab -->
   <div id="tab-notebooklm" class="tab-panel">
     <div id="nlm-content"></div>
@@ -347,6 +379,7 @@ const COLORS = {
 
 let allData = { video1: null, video2: null };
 let nlmData = null;
+let nlmParsed = { video1: null, video2: null };
 
 async function loadData() {
   try {
@@ -363,10 +396,39 @@ async function loadData() {
       allData.video2 = d.results;
     }
   } catch(e) {}
+  // Load NotebookLM content from markdown files (if available)
   try {
-    const rn = await fetch('../notebooklm_output/notebooklm_analysis.json');
-    if (rn.ok) nlmData = await rn.json();
+    const m1 = await fetch('/notebooklm_sources/notebooklm_viedo1_result.md');
+    const m2 = await fetch('/notebooklm_sources/notebooklm_viedo2_result.md');
+    if (m1.ok || m2.ok) {
+      nlmData = { sections: [] };
+      if (m1.ok) nlmData.sections.push({ title: 'NotebookLM · 深情誘引', md: await m1.text(), key: 'video1' });
+      if (m2.ok) nlmData.sections.push({ title: 'NotebookLM · 冒姓琅琊', md: await m2.text(), key: 'video2' });
+    }
   } catch(e) {}
+  // Fallback alternate filenames
+  if (!nlmData) {
+    try {
+      const a1 = await fetch('/notebooklm_sources/video1_analysis.md');
+      const a2 = await fetch('/notebooklm_sources/video2_analysis.md');
+      if (a1.ok || a2.ok) {
+        nlmData = { sections: [] };
+        if (a1.ok) nlmData.sections.push({ title: 'NotebookLM · 深情誘引', md: await a1.text(), key: 'video1' });
+        if (a2.ok) nlmData.sections.push({ title: 'NotebookLM · 冒姓琅琊', md: await a2.text(), key: 'video2' });
+      }
+    } catch(e) {}
+  }
+  // Back-compat JSON
+  if (!nlmData) {
+    try {
+      const rn = await fetch('/notebooklm_output/notebooklm_analysis.json');
+      if (rn.ok) nlmData = await rn.json();
+    } catch(e) {}
+  }
+
+  if (nlmData && nlmData.sections) {
+    nlmParsed = parseNotebookLMSections(nlmData.sections);
+  }
 
   renderAll();
 }
@@ -407,6 +469,44 @@ function stackedBarConfig(data, labels) {
 function avg(arr, key) {
   if (!arr || !arr.length) return 0;
   return Math.round(arr.reduce((s, d) => s + (d[key] || 0), 0) / arr.length);
+}
+
+// Parse NotebookLM markdown sections into episode-level percentage data
+function parseNotebookLMSections(sections) {
+  const result = { video1: null, video2: null };
+  const parseOne = (md) => {
+    const eps = new Map();
+    const matches = md.matchAll(/\{[\s\S]*?\}/g);
+    for (const m of matches) {
+      const block = m[0];
+      if (!/\"episode\"\s*:\s*\d+/.test(block)) continue;
+      // Extract values via regex to tolerate minor JSON issues
+      const em = /\"episode\"\s*:\s*(\d+)/.exec(block);
+      if (!em) continue;
+      const ep = parseInt(em[1], 10);
+      const get = (key) => {
+        const mm = new RegExp('\\"' + key + '\\"\\s*:\\s*(\\d+)', 'm').exec(block);
+        return mm ? parseInt(mm[1], 10) : 0;
+      };
+      eps.set(ep, {
+        episode: ep,
+        laugh_pct: get('laugh_pct'),
+        sweet_pct: get('sweet_pct'),
+        hype_pct: get('hype_pct'),
+        conflict_pct: get('conflict_pct'),
+        cry_pct: get('cry_pct')
+      });
+    }
+    const arr = Array.from(eps.values()).sort((a,b) => a.episode - b.episode);
+    return arr.length ? arr : null;
+  };
+  sections.forEach(sec => {
+    const key = sec.key || (/深情|誘引/.test(sec.title || '') ? 'video1' : /冒姓|琅琊/.test(sec.title || '') ? 'video2' : null);
+    if (!key) return;
+    const parsed = parseOne(sec.md || '');
+    if (parsed) result[key] = parsed;
+  });
+  return result;
 }
 
 // ==================== RENDER FUNCTIONS ====================
@@ -596,6 +696,44 @@ function renderCompare() {
 
 function renderNLM() {
   const container = document.getElementById('nlm-content');
+  if (nlmParsed.video1 || nlmParsed.video2) {
+    container.innerHTML = '';
+    if (nlmParsed.video1) {
+      const block1 = document.createElement('div');
+      block1.innerHTML = `
+        <div class="section-title">NotebookLM · 深情誘引</div>
+        <div class="timeline-wrap">
+          <div class="timeline-title">深情誘引 — NotebookLM 逐集情绪分布</div>
+          <canvas id="nlm-v1-timeline" height="90"></canvas>
+        </div>
+        <div class="radar-wrap">
+          <div class="chart-card"><canvas id="nlm-v1-radar"></canvas></div>
+          <div class="chart-card"><canvas id="nlm-v1-pie"></canvas></div>
+        </div>`;
+      container.appendChild(block1);
+      renderTimeline('nlm-v1-timeline', nlmParsed.video1);
+      renderRadar('nlm-v1-radar', nlmParsed.video1, 'NotebookLM · 深情誘引');
+      renderPie('nlm-v1-pie', nlmParsed.video1, 'NotebookLM · 深情誘引');
+    }
+    if (nlmParsed.video2) {
+      const block2 = document.createElement('div');
+      block2.innerHTML = `
+        <div class="section-title">NotebookLM · 冒姓琅琊</div>
+        <div class="timeline-wrap">
+          <div class="timeline-title">冒姓琅琊 — NotebookLM 逐集情绪分布</div>
+          <canvas id="nlm-v2-timeline" height="90"></canvas>
+        </div>
+        <div class="radar-wrap">
+          <div class="chart-card"><canvas id="nlm-v2-radar"></canvas></div>
+          <div class="chart-card"><canvas id="nlm-v2-pie"></canvas></div>
+        </div>`;
+      container.appendChild(block2);
+      renderTimeline('nlm-v2-timeline', nlmParsed.video2);
+      renderRadar('nlm-v2-radar', nlmParsed.video2, 'NotebookLM · 冒姓琅琊');
+      renderPie('nlm-v2-pie', nlmParsed.video2, 'NotebookLM · 冒姓琅琊');
+    }
+    return;
+  }
   if (!nlmData) {
     container.innerHTML = `
       <div class="loading-msg">
@@ -606,16 +744,37 @@ function renderNLM() {
     return;
   }
 
-  // Render NotebookLM structured data
+  // Render NotebookLM content
   container.innerHTML = `<div class="nlm-panel" id="nlm-rendered"></div>`;
   const panel = document.getElementById('nlm-rendered');
 
+  // Prefer markdown sections if present
+  if (nlmData.sections && Array.isArray(nlmData.sections) && nlmData.sections.length) {
+    nlmData.sections.forEach(s => {
+      const sec = document.createElement('div');
+      sec.className = 'nlm-section';
+      sec.innerHTML = `<h3>${s.title || 'NotebookLM 分析'}</h3>`;
+      const content = document.createElement('div');
+      try {
+        content.innerHTML = (window.marked ? window.marked.parse(s.md || '') : (s.md || '').replace(/\n/g, '<br>'));
+      } catch (_) {
+        content.textContent = s.md || '';
+      }
+      content.style.cssText = 'font-size:0.85rem;line-height:1.7;color:#9090a8';
+      sec.appendChild(content);
+      panel.appendChild(sec);
+    });
+    return;
+  }
+
+  // Back-compat: structured JSON
   if (nlmData.briefing_doc) {
     const sec = document.createElement('div');
     sec.className = 'nlm-section';
     sec.innerHTML = `<h3>Briefing Doc · 简报分析</h3>`;
     const content = document.createElement('div');
-    content.innerHTML = marked(nlmData.briefing_doc || '');
+    try { content.innerHTML = marked(nlmData.briefing_doc || ''); }
+    catch (_) { content.textContent = nlmData.briefing_doc || ''; }
     content.style.cssText = 'font-size:0.85rem;line-height:1.7;color:#9090a8';
     sec.appendChild(content);
     panel.appendChild(sec);
@@ -626,7 +785,8 @@ function renderNLM() {
     sec.className = 'nlm-section';
     sec.innerHTML = `<h3>Study Guide · 学习指南</h3>`;
     const content = document.createElement('div');
-    content.innerHTML = marked(nlmData.study_guide || '');
+    try { content.innerHTML = marked(nlmData.study_guide || ''); }
+    catch (_) { content.textContent = nlmData.study_guide || ''; }
     content.style.cssText = 'font-size:0.85rem;line-height:1.7;color:#9090a8';
     sec.appendChild(content);
     panel.appendChild(sec);
@@ -636,7 +796,7 @@ function renderNLM() {
     const sec = document.createElement('div');
     sec.className = 'nlm-section';
     sec.innerHTML = `<h3>核心洞察</h3>
-      ${nlmData.key_insights.map(i => `<div class="nlm-highlight">${i}</div>`).join('')}`;
+      ${nlmData.key_insights.map(i => `<div class=\"nlm-highlight\">${i}</div>`).join('')}`;
     panel.appendChild(sec);
   }
 }
@@ -661,6 +821,7 @@ function renderAll() {
   if (allData.video1 && allData.video2) {
     renderCompare();
   }
+  renderSourceCompare();
   renderNLM();
 }
 
@@ -697,6 +858,104 @@ setInterval(async () => {
     }
   }
 }, 30000);
+
+// ==================== SOURCE COMPARISON ====================
+function renderSourceCompare() {
+  const haveV1 = allData.video1 && nlmParsed.video1;
+  const haveV2 = allData.video2 && nlmParsed.video2;
+  const categories = ['laugh_pct','sweet_pct','hype_pct','conflict_pct','cry_pct'];
+  const labelsCN = ['笑点','甜点','爽点','冲突','泪点'];
+  const colors = Object.values(COLORS);
+
+  function avgs(d) { return categories.map(k => avg(d, k)); }
+  function lineDiffSeries(oll, nlm) {
+    const len = Math.max(oll.length, nlm.length);
+    const x = Array.from({length: len}, (_, i) => i + 1);
+    return {
+      labels: x,
+      datasets: categories.map((k, i) => ({
+        label: labelsCN[i],
+        data: x.map(ep => (nlm.find(e => e.episode===ep)?.[k]||0) - (oll.find(e => e.episode===ep)?.[k]||0)),
+        borderColor: colors[i],
+        backgroundColor: colors[i] + '22',
+        fill: false,
+        tension: 0.25,
+        pointRadius: 0
+      }))
+    };
+  }
+
+  // Video 1
+  if (haveV1) {
+    // Radar overlay
+    new Chart(document.getElementById('src-v1-radar'), {
+      type: 'radar',
+      data: {
+        labels: labelsCN,
+        datasets: [
+          { label: 'Ollama', data: avgs(allData.video1), backgroundColor: 'rgba(78,203,247,0.15)', borderColor: '#4ecbf7', pointBackgroundColor: '#4ecbf7' },
+          { label: 'NotebookLM', data: avgs(nlmParsed.video1), backgroundColor: 'rgba(124,108,247,0.15)', borderColor: '#7c6cf7', pointBackgroundColor: '#7c6cf7' }
+        ]
+      },
+      options: { plugins: { legend: { labels: { color: '#9090a8' } } }, scales: { r: { grid: { color: '#2e2e3f' }, pointLabels: { color: '#e8e8f0' }, ticks: { display: false }, suggestedMax: 60 } } }
+    });
+    // Grouped bars for averages
+    new Chart(document.getElementById('src-v1-bars'), {
+      type: 'bar',
+      data: {
+        labels: labelsCN,
+        datasets: [
+          { label: 'Ollama', data: avgs(allData.video1), backgroundColor: '#4ecbf7' },
+          { label: 'NotebookLM', data: avgs(nlmParsed.video1), backgroundColor: '#7c6cf7' }
+        ]
+      },
+      options: { responsive: true, plugins: { legend: { labels: { color: '#9090a8' } } }, scales: { x: { ticks: { color: '#9090a8' }, grid: { color: '#2e2e3f' } }, y: { ticks: { color: '#9090a8', callback: v => v + '%' }, grid: { color: '#2e2e3f' }, suggestedMax: 80 } } }
+    });
+    // Episode-wise diff lines
+    new Chart(document.getElementById('src-v1-diff'), {
+      type: 'line',
+      data: lineDiffSeries(allData.video1, nlmParsed.video1),
+      options: { plugins: { legend: { labels: { color: '#9090a8', font: { size: 10 } } } }, scales: { x: { ticks: { color: '#9090a8' }, grid: { color: '#2e2e3f' } }, y: { ticks: { color: '#9090a8', callback: v => v + '%' }, grid: { color: '#2e2e3f' } } } }
+    });
+  } else {
+    const el = document.getElementById('src-v1-radar');
+    if (el) el.parentElement.innerHTML = '<div class="loading-msg">等待加载深情誘引的两源数据…</div>';
+  }
+
+  // Video 2
+  if (haveV2) {
+    new Chart(document.getElementById('src-v2-radar'), {
+      type: 'radar',
+      data: {
+        labels: labelsCN,
+        datasets: [
+          { label: 'Ollama', data: avgs(allData.video2), backgroundColor: 'rgba(78,203,247,0.15)', borderColor: '#4ecbf7', pointBackgroundColor: '#4ecbf7' },
+          { label: 'NotebookLM', data: avgs(nlmParsed.video2), backgroundColor: 'rgba(124,108,247,0.15)', borderColor: '#7c6cf7', pointBackgroundColor: '#7c6cf7' }
+        ]
+      },
+      options: { plugins: { legend: { labels: { color: '#9090a8' } } }, scales: { r: { grid: { color: '#2e2e3f' }, pointLabels: { color: '#e8e8f0' }, ticks: { display: false }, suggestedMax: 60 } } }
+    });
+    new Chart(document.getElementById('src-v2-bars'), {
+      type: 'bar',
+      data: {
+        labels: labelsCN,
+        datasets: [
+          { label: 'Ollama', data: avgs(allData.video2), backgroundColor: '#4ecbf7' },
+          { label: 'NotebookLM', data: avgs(nlmParsed.video2), backgroundColor: '#7c6cf7' }
+        ]
+      },
+      options: { responsive: true, plugins: { legend: { labels: { color: '#9090a8' } } }, scales: { x: { ticks: { color: '#9090a8' }, grid: { color: '#2e2e3f' } }, y: { ticks: { color: '#9090a8', callback: v => v + '%' }, grid: { color: '#2e2e3f' }, suggestedMax: 80 } } }
+    });
+    new Chart(document.getElementById('src-v2-diff'), {
+      type: 'line',
+      data: lineDiffSeries(allData.video2, nlmParsed.video2),
+      options: { plugins: { legend: { labels: { color: '#9090a8', font: { size: 10 } } } }, scales: { x: { ticks: { color: '#9090a8' }, grid: { color: '#2e2e3f' } }, y: { ticks: { color: '#9090a8', callback: v => v + '%' }, grid: { color: '#2e2e3f' } } } }
+    });
+  } else {
+    const el = document.getElementById('src-v2-radar');
+    if (el) el.parentElement.innerHTML = '<div class="loading-msg">等待加载冒姓琅琊的两源数据…</div>';
+  }
+}
 </script>
 </body>
 </html>
