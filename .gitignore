@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# macOS
+.DS_Store
+._*
+
+# Video downloads
+video_downloads/*.mp4
+video_downloads/*.webm
+video_downloads/*.mkv
+!video_downloads/*.json
+!video_downloads/*.srt
+
+# Analysis results
+analysis_results/*.json
+!analysis_results/.gitkeep
+
+# Episodes
+episodes/*.json
+
+# NotebookLM sources
+notebooklm_sources/
+
+# Logs
+*.log
+
+# Images
+*.png
+!visualization/*.png
+!example.png
+
+# Environment
+.env
+.env.local

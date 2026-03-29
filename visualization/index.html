@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>短剧情绪分析 · Drama Emotion Analytics</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #22222f;
+      --border: #2e2e3f;
+      --text: #e8e8f0;
+      --text2: #9090a8;
+      --accent: #7c6cf7;
+      --laugh: #f7c948;
+      --sweet: #f87eb0;
+      --hype: #4ecbf7;
+      --conflict: #f77c4e;
+      --cry: #a4b8f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'SF Pro Display', -apple-system, 'PingFang SC', sans-serif;
+      min-height: 100vh;
+    }
+    header {
+      padding: 32px 48px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+    header p { color: var(--text2); font-size: 0.9rem; margin-top: 4px; }
+    .badge {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      color: var(--text2);
+    }
+    .source-badge.ollama { border-color: #4ecbf7; color: #4ecbf7; }
+    .source-badge.notebooklm { border-color: #7c6cf7; color: #7c6cf7; }
+
+    .legend-bar {
+      display: flex;
+      gap: 20px;
+      padding: 16px 48px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: var(--text2);
+    }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      padding: 20px 48px 0;
+    }
+    .tab {
+      padding: 8px 20px;
+      border-radius: 8px 8px 0 0;
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--text2);
+      border: 1px solid transparent;
+      border-bottom: none;
+      transition: all 0.15s;
+    }
+    .tab.active {
+      background: var(--surface);
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .main { padding: 0 48px 48px; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .section-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text2);
+      margin: 32px 0 16px;
+    }
+
+    /* Stacked bar timeline */
+    .timeline-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .timeline-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Episode cards grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .ep-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.1s;
+      position: relative;
+      overflow: hidden;
+    }
+    .ep-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .ep-card .ep-num {
+      font-size: 0.7rem;
+      color: var(--text2);
+      margin-bottom: 6px;
+    }
+    .ep-card .ep-summary {
+      font-size: 0.82rem;
+      line-height: 1.4;
+      margin-bottom: 10px;
+      min-height: 2.8em;
+    }
+    .ep-card .mini-bar {
+      height: 6px;
+      border-radius: 3px;
+      display: flex;
+      overflow: hidden;
+      gap: 1px;
+    }
+    .mini-seg { height: 100%; border-radius: 2px; transition: flex 0.3s; }
+    .ep-card .pct-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .pct-chip {
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    /* Radar chart */
+    .radar-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .chart-card canvas { max-height: 280px; }
+
+    /* NotebookLM panel */
+    .nlm-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+    }
+    .nlm-section { margin-bottom: 28px; }
+    .nlm-section h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--accent);
+    }
+    .nlm-section p, .nlm-section li {
+      font-size: 0.85rem;
+      line-height: 1.7;
+      color: var(--text2);
+    }
+    .nlm-section ul { padding-left: 18px; }
+    .nlm-section li { margin-bottom: 6px; }
+    .nlm-highlight {
+      background: var(--surface2);
+      border-left: 3px solid var(--accent);
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 12px 0;
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: var(--text);
+    }
+    .loading-msg {
+      text-align: center;
+      color: var(--text2);
+      padding: 60px 20px;
+      font-size: 0.9rem;
+    }
+    .loading-msg .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* tooltip */
+    #tooltip {
+      position: fixed;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.8rem;
+      pointer-events: none;
+      z-index: 999;
+      max-width: 260px;
+      display: none;
+    }
+
+    @media (max-width: 768px) {
+      header, .tabs, .main, .legend-bar { padding-left: 16px; padding-right: 16px; }
+      .radar-wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>短剧情绪分析</h1>
+    <p>Drama Emotion Analytics · 两部剧全集字幕情绪标注与可视化</p>
+  </div>
+  <span class="badge source-badge ollama">Ollama · qwen3-vl:4b</span>
+  <span class="badge source-badge notebooklm">NotebookLM</span>
+</header>
+
+<div class="legend-bar">
+  <div class="legend-item"><div class="dot" style="background:var(--laugh)"></div> 笑点 Laugh</div>
+  <div class="legend-item"><div class="dot" style="background:var(--sweet)"></div> 甜点 Sweet</div>
+  <div class="legend-item"><div class="dot" style="background:var(--hype)"></div> 爽点 Hype</div>
+  <div class="legend-item"><div class="dot" style="background:var(--conflict)"></div> 冲突 Conflict</div>
+  <div class="legend-item"><div class="dot" style="background:var(--cry)"></div> 泪点 Cry</div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="video1">深情誘引</div>
+  <div class="tab" data-tab="video2">冒姓琅琊</div>
+  <div class="tab" data-tab="compare">对比分析</div>
+  <div class="tab" data-tab="notebooklm">NotebookLM 分析</div>
+</div>
+
+<div class="main">
+  <!-- Video 1 Tab -->
+  <div id="tab-video1" class="tab-panel active">
+    <div class="section-title">情绪时间线 · Emotion Timeline</div>
+    <div class="timeline-wrap">
+      <div class="timeline-title">深情誘引 — 全25集情绪分布</div>
+      <canvas id="chart-v1-timeline" height="90"></canvas>
+    </div>
+    <div class="section-title">雷达图对比 · Radar Overview</div>
+    <div class="radar-wrap">
+      <div class="chart-card">
+        <canvas id="chart-v1-radar"></canvas>
+      </div>
+      <div class="chart-card">
+        <canvas id="chart-v1-pie"></canvas>
+      </div>
+    </div>
+    <div class="section-title">逐集详情 · Episode Details</div>
+    <div id="grid-v1" class="grid"></div>
+  </div>
+
+  <!-- Video 2 Tab -->
+  <div id="tab-video2" class="tab-panel">
+    <div class="section-title">情绪时间线 · Emotion Timeline</div>
+    <div class="timeline-wrap">
+      <div class="timeline-title">冒姓琅琊之南朝贵公子 — 全17集情绪分布</div>
+      <canvas id="chart-v2-timeline" height="90"></canvas>
+    </div>
+    <div class="section-title">雷达图对比 · Radar Overview</div>
+    <div class="radar-wrap">
+      <div class="chart-card">
+        <canvas id="chart-v2-radar"></canvas>
+      </div>
+      <div class="chart-card">
+        <canvas id="chart-v2-pie"></canvas>
+      </div>
+    </div>
+    <div class="section-title">逐集详情 · Episode Details</div>
+    <div id="grid-v2" class="grid"></div>
+  </div>
+
+  <!-- Compare Tab -->
+  <div id="tab-compare" class="tab-panel">
+    <div class="section-title">两剧情绪均值对比</div>
+    <div class="chart-card" style="margin-bottom:24px">
+      <canvas id="chart-compare" height="100"></canvas>
+    </div>
+    <div class="section-title">情绪强度热力图</div>
+    <div class="chart-card">
+      <canvas id="chart-heatmap" height="120"></canvas>
+    </div>
+  </div>
+
+  <!-- NotebookLM Tab -->
+  <div id="tab-notebooklm" class="tab-panel">
+    <div id="nlm-content"></div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+// ==================== DATA LOADING ====================
+const COLORS = {
+  laugh: '#f7c948',
+  sweet: '#f87eb0',
+  hype: '#4ecbf7',
+  conflict: '#f77c4e',
+  cry: '#a4b8f7',
+};
+
+let allData = { video1: null, video2: null };
+let nlmData = null;
+
+async function loadData() {
+  try {
+    const r1 = await fetch('../analysis_results/video1_results.json');
+    if (r1.ok) {
+      const d = await r1.json();
+      allData.video1 = d.results;
+    }
+  } catch(e) {}
+  try {
+    const r2 = await fetch('../analysis_results/video2_results.json');
+    if (r2.ok) {
+      const d = await r2.json();
+      allData.video2 = d.results;
+    }
+  } catch(e) {}
+  try {
+    const rn = await fetch('../notebooklm_output/notebooklm_analysis.json');
+    if (rn.ok) nlmData = await rn.json();
+  } catch(e) {}
+
+  renderAll();
+}
+
+// ==================== CHART HELPERS ====================
+function stackedBarConfig(data, labels) {
+  return {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: '笑点', data: data.map(d => d.laugh_pct), backgroundColor: COLORS.laugh, stack: 'e' },
+        { label: '甜点', data: data.map(d => d.sweet_pct), backgroundColor: COLORS.sweet, stack: 'e' },
+        { label: '爽点', data: data.map(d => d.hype_pct), backgroundColor: COLORS.hype, stack: 'e' },
+        { label: '冲突', data: data.map(d => d.conflict_pct), backgroundColor: COLORS.conflict, stack: 'e' },
+        { label: '泪点', data: data.map(d => d.cry_pct), backgroundColor: COLORS.cry, stack: 'e' },
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: ctx => `第${ctx[0].label}集`,
+            label: ctx => `${ctx.dataset.label}: ${ctx.raw}%`
+          }
+        }
+      },
+      scales: {
+        x: { stacked: true, grid: { color: '#2e2e3f' }, ticks: { color: '#9090a8', font: { size: 10 } } },
+        y: { stacked: true, max: 100, grid: { color: '#2e2e3f' }, ticks: { color: '#9090a8', font: { size: 10 }, callback: v => v + '%' } }
+      }
+    }
+  };
+}
+
+function avg(arr, key) {
+  if (!arr || !arr.length) return 0;
+  return Math.round(arr.reduce((s, d) => s + (d[key] || 0), 0) / arr.length);
+}
+
+// ==================== RENDER FUNCTIONS ====================
+function renderTimeline(canvasId, data) {
+  const labels = data.map(d => d.episode);
+  const cfg = stackedBarConfig(data, labels);
+  new Chart(document.getElementById(canvasId), cfg);
+}
+
+function renderRadar(canvasId, data, label) {
+  const avgs = ['laugh_pct','sweet_pct','hype_pct','conflict_pct','cry_pct'].map(k => avg(data, k));
+  new Chart(document.getElementById(canvasId), {
+    type: 'radar',
+    data: {
+      labels: ['笑点','甜点','爽点','冲突','泪点'],
+      datasets: [{
+        label,
+        data: avgs,
+        backgroundColor: 'rgba(124,108,247,0.2)',
+        borderColor: '#7c6cf7',
+        pointBackgroundColor: '#7c6cf7',
+        pointRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#9090a8', font: { size: 11 } } } },
+      scales: {
+        r: {
+          angleLines: { color: '#2e2e3f' },
+          grid: { color: '#2e2e3f' },
+          pointLabels: { color: '#e8e8f0', font: { size: 12 } },
+          ticks: { display: false },
+          suggestedMax: 50
+        }
+      }
+    }
+  });
+}
+
+function renderPie(canvasId, data, title) {
+  const keys = ['laugh_pct','sweet_pct','hype_pct','conflict_pct','cry_pct'];
+  const labels = ['笑点','甜点','爽点','冲突','泪点'];
+  const vals = keys.map(k => avg(data, k));
+  new Chart(document.getElementById(canvasId), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: vals,
+        backgroundColor: Object.values(COLORS),
+        borderColor: '#1a1a24',
+        borderWidth: 2,
+        hoverOffset: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#9090a8', font: { size: 11 }, padding: 12 } },
+        title: { display: true, text: title + ' 情绪占比均值', color: '#e8e8f0', font: { size: 13 } }
+      }
+    }
+  });
+}
+
+function renderEpisodeCards(gridId, data) {
+  const grid = document.getElementById(gridId);
+  grid.innerHTML = '';
+  data.forEach(ep => {
+    const total = ep.laugh_pct + ep.sweet_pct + ep.hype_pct + ep.conflict_pct + ep.cry_pct;
+    const card = document.createElement('div');
+    card.className = 'ep-card';
+
+    const segs = [
+      { pct: ep.laugh_pct, color: COLORS.laugh, label: '笑' },
+      { pct: ep.sweet_pct, color: COLORS.sweet, label: '甜' },
+      { pct: ep.hype_pct,  color: COLORS.hype,  label: '爽' },
+      { pct: ep.conflict_pct, color: COLORS.conflict, label: '冲' },
+      { pct: ep.cry_pct,  color: COLORS.cry,   label: '泪' },
+    ].filter(s => s.pct > 0);
+
+    const timeRange = ep.time_range || '';
+    card.innerHTML = `
+      <div class="ep-num">第 ${ep.episode} 集 &nbsp;·&nbsp; ${timeRange}</div>
+      <div class="ep-summary">${ep.episode_summary || ''}</div>
+      <div class="mini-bar">
+        ${segs.map(s => `<div class="mini-seg" style="background:${s.color};flex:${s.pct}"></div>`).join('')}
+        <div class="mini-seg" style="background:#2e2e3f;flex:${Math.max(0,100-total)}"></div>
+      </div>
+      <div class="pct-row">
+        ${segs.map(s => `<span class="pct-chip" style="background:${s.color}22;color:${s.color}">${s.label} ${s.pct}%</span>`).join('')}
+      </div>
+    `;
+
+    // Tooltip
+    card.addEventListener('mousemove', e => {
+      const tips = [
+        ep.laugh_notes ? `笑点: ${ep.laugh_notes}` : '',
+        ep.sweet_notes ? `甜点: ${ep.sweet_notes}` : '',
+        ep.hype_notes  ? `爽点: ${ep.hype_notes}` : '',
+        ep.conflict_notes ? `冲突: ${ep.conflict_notes}` : '',
+        ep.cry_notes   ? `泪点: ${ep.cry_notes}` : '',
+      ].filter(Boolean).join('<br>');
+      const tt = document.getElementById('tooltip');
+      tt.innerHTML = tips || '无详细备注';
+      tt.style.display = 'block';
+      tt.style.left = (e.clientX + 12) + 'px';
+      tt.style.top  = (e.clientY - 10) + 'px';
+    });
+    card.addEventListener('mouseleave', () => {
+      document.getElementById('tooltip').style.display = 'none';
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+function renderCompare() {
+  if (!allData.video1 || !allData.video2) return;
+  const keys = ['laugh_pct','sweet_pct','hype_pct','conflict_pct','cry_pct'];
+  const labels = ['笑点','甜点','爽点','冲突','泪点'];
+  new Chart(document.getElementById('chart-compare'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '深情誘引',
+          data: keys.map(k => avg(allData.video1, k)),
+          backgroundColor: 'rgba(124,108,247,0.7)',
+          borderColor: '#7c6cf7',
+          borderWidth: 1,
+        },
+        {
+          label: '冒姓琅琊',
+          data: keys.map(k => avg(allData.video2, k)),
+          backgroundColor: 'rgba(78,203,247,0.7)',
+          borderColor: '#4ecbf7',
+          borderWidth: 1,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#9090a8' } },
+        title: { display: true, text: '两剧情绪均值对比', color: '#e8e8f0', font: { size: 14 } }
+      },
+      scales: {
+        x: { grid: { color: '#2e2e3f' }, ticks: { color: '#9090a8' } },
+        y: { grid: { color: '#2e2e3f' }, ticks: { color: '#9090a8', callback: v => v + '%' }, max: 60 }
+      }
+    }
+  });
+
+  // Heatmap as line chart
+  const v1 = allData.video1;
+  const v2 = allData.video2;
+  new Chart(document.getElementById('chart-heatmap'), {
+    type: 'line',
+    data: {
+      labels: v1.map(d => `V1·${d.episode}`).concat(v2.map(d => `V2·${d.episode}`)),
+      datasets: keys.map((k, i) => ({
+        label: labels[i],
+        data: v1.map(d => d[k]).concat(v2.map(d => d[k])),
+        borderColor: Object.values(COLORS)[i],
+        backgroundColor: Object.values(COLORS)[i] + '22',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 2,
+      }))
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#9090a8', font: { size: 10 } } },
+        title: { display: true, text: '全集情绪强度趋势（两剧连续）', color: '#e8e8f0', font: { size: 13 } }
+      },
+      scales: {
+        x: { grid: { color: '#2e2e3f' }, ticks: { color: '#9090a8', font: { size: 9 }, maxRotation: 45 } },
+        y: { grid: { color: '#2e2e3f' }, ticks: { color: '#9090a8', callback: v => v + '%' } }
+      }
+    }
+  });
+}
+
+function renderNLM() {
+  const container = document.getElementById('nlm-content');
+  if (!nlmData) {
+    container.innerHTML = `
+      <div class="loading-msg">
+        <div class="spinner"></div>
+        <p>NotebookLM 分析结果尚未生成</p>
+        <p style="margin-top:8px;font-size:0.8rem">请先完成 NotebookLM 登录并生成分析，结果将自动加载</p>
+      </div>`;
+    return;
+  }
+
+  // Render NotebookLM structured data
+  container.innerHTML = `<div class="nlm-panel" id="nlm-rendered"></div>`;
+  const panel = document.getElementById('nlm-rendered');
+
+  if (nlmData.briefing_doc) {
+    const sec = document.createElement('div');
+    sec.className = 'nlm-section';
+    sec.innerHTML = `<h3>Briefing Doc · 简报分析</h3>`;
+    const content = document.createElement('div');
+    content.innerHTML = marked(nlmData.briefing_doc || '');
+    content.style.cssText = 'font-size:0.85rem;line-height:1.7;color:#9090a8';
+    sec.appendChild(content);
+    panel.appendChild(sec);
+  }
+
+  if (nlmData.study_guide) {
+    const sec = document.createElement('div');
+    sec.className = 'nlm-section';
+    sec.innerHTML = `<h3>Study Guide · 学习指南</h3>`;
+    const content = document.createElement('div');
+    content.innerHTML = marked(nlmData.study_guide || '');
+    content.style.cssText = 'font-size:0.85rem;line-height:1.7;color:#9090a8';
+    sec.appendChild(content);
+    panel.appendChild(sec);
+  }
+
+  if (nlmData.key_insights) {
+    const sec = document.createElement('div');
+    sec.className = 'nlm-section';
+    sec.innerHTML = `<h3>核心洞察</h3>
+      ${nlmData.key_insights.map(i => `<div class="nlm-highlight">${i}</div>`).join('')}`;
+    panel.appendChild(sec);
+  }
+}
+
+function renderAll() {
+  if (allData.video1 && allData.video1.length) {
+    renderTimeline('chart-v1-timeline', allData.video1);
+    renderRadar('chart-v1-radar', allData.video1, '深情誘引');
+    renderPie('chart-v1-pie', allData.video1, '深情誘引');
+    renderEpisodeCards('grid-v1', allData.video1);
+  } else {
+    document.getElementById('tab-video1').innerHTML = `<div class="loading-msg"><div class="spinner"></div><p>Ollama 分析进行中，请稍候...</p></div>`;
+  }
+  if (allData.video2 && allData.video2.length) {
+    renderTimeline('chart-v2-timeline', allData.video2);
+    renderRadar('chart-v2-radar', allData.video2, '冒姓琅琊');
+    renderPie('chart-v2-pie', allData.video2, '冒姓琅琊');
+    renderEpisodeCards('grid-v2', allData.video2);
+  } else {
+    document.getElementById('tab-video2').innerHTML = `<div class="loading-msg"><div class="spinner"></div><p>Ollama 分析进行中，请稍候...</p></div>`;
+  }
+  if (allData.video1 && allData.video2) {
+    renderCompare();
+  }
+  renderNLM();
+}
+
+// ==================== TAB SWITCHING ====================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ==================== INIT ====================
+loadData();
+
+// Auto-reload every 30s while analysis running
+setInterval(async () => {
+  const hadData = allData.video1 && allData.video2;
+  if (!hadData) {
+    // Re-fetch and re-render if new data
+    const prev1 = allData.video1?.length || 0;
+    const prev2 = allData.video2?.length || 0;
+    try {
+      const r1 = await fetch('../analysis_results/video1_results.json?t=' + Date.now());
+      if (r1.ok) { const d = await r1.json(); allData.video1 = d.results; }
+    } catch(e) {}
+    try {
+      const r2 = await fetch('../analysis_results/video2_results.json?t=' + Date.now());
+      if (r2.ok) { const d = await r2.json(); allData.video2 = d.results; }
+    } catch(e) {}
+    if ((allData.video1?.length || 0) !== prev1 || (allData.video2?.length || 0) !== prev2) {
+      location.reload();
+    }
+  }
+}, 30000);
+</script>
+</body>
+</html>
