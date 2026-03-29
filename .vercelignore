@@ -1,0 +1,10 @@
+video_downloads/
+episodes/
+node_modules/
+.DS_Store
+._*
+*.log
+*.png
+!example.png
+analysis_results/
+notebooklm_sources/
